@@ -1,0 +1,9 @@
+C:/Users/jayar/OneDrive/Documents/CMPM 123/chess-base/build/CMakeFiles/Experimental.dir
+C:/Users/jayar/OneDrive/Documents/CMPM 123/chess-base/build/CMakeFiles/Nightly.dir
+C:/Users/jayar/OneDrive/Documents/CMPM 123/chess-base/build/CMakeFiles/Continuous.dir
+C:/Users/jayar/OneDrive/Documents/CMPM 123/chess-base/build/CMakeFiles/NightlyMemoryCheck.dir
+C:/Users/jayar/OneDrive/Documents/CMPM 123/chess-base/build/CMakeFiles/demo.dir
+C:/Users/jayar/OneDrive/Documents/CMPM 123/chess-base/build/CMakeFiles/PACKAGE.dir
+C:/Users/jayar/OneDrive/Documents/CMPM 123/chess-base/build/CMakeFiles/RUN_TESTS.dir
+C:/Users/jayar/OneDrive/Documents/CMPM 123/chess-base/build/CMakeFiles/ALL_BUILD.dir
+C:/Users/jayar/OneDrive/Documents/CMPM 123/chess-base/build/CMakeFiles/ZERO_CHECK.dir

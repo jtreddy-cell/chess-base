@@ -1,6 +1,7 @@
 #include "Chess.h"
 #include <limits>
 #include <cmath>
+#include <cctype>
 
 Chess::Chess()
 {
@@ -52,15 +53,62 @@ void Chess::setUpBoard()
 }
 
 void Chess::FENtoBoard(const std::string& fen) {
-    // convert a FEN string to a board
-    // FEN is a space delimited string with 6 fields
-    // 1: piece placement (from white's perspective)
-    // NOT PART OF THIS ASSIGNMENT BUT OTHER THINGS THAT CAN BE IN A FEN STRING
-    // ARE BELOW
-    // 2: active color (W or B)
-    // 3: castling availability (KQkq or -)
-    // 4: en passant target square (in algebraic notation, or -)
-    // 5: halfmove clock (number of halfmoves since the last capture or pawn advance)
+    // Parse board portion of FEN (supports board-only or full FEN with spaces)
+    // Clear existing pieces first
+    _grid->forEachSquare([](ChessSquare* square, int x, int y) {
+        square->destroyBit();
+    });
+
+    // Extract the first field (piece placement)
+    std::string placement = fen;
+    size_t spacePos = fen.find(' ');
+    if (spacePos != std::string::npos) {
+        placement = fen.substr(0, spacePos);
+    }
+
+    int y = 7; // FEN starts at rank 8 (top) -> internal y = 7
+    int x = 0;
+    for (size_t i = 0; i < placement.size() && y >= 0; ++i) {
+        char c = placement[i];
+        if (c == '/') {
+            y -= 1;
+            x = 0;
+            continue;
+        }
+        if (std::isdigit(static_cast<unsigned char>(c))) {
+            x += (c - '0');
+            continue;
+        }
+
+        // Piece letter
+        bool isWhite = std::isupper(static_cast<unsigned char>(c)) != 0;
+        char lower = (char)std::tolower(static_cast<unsigned char>(c));
+        ChessPiece piece = NoPiece;
+        switch (lower) {
+            case 'p': piece = Pawn; break;
+            case 'n': piece = Knight; break;
+            case 'b': piece = Bishop; break;
+            case 'r': piece = Rook; break;
+            case 'q': piece = Queen; break;
+            case 'k': piece = King; break;
+            default: piece = NoPiece; break;
+        }
+        if (piece != NoPiece && x >= 0 && x < 8 && y >= 0 && y < 8) {
+            int playerNumber = isWhite ? 0 : 1;
+            ChessSquare* sq = _grid->getSquare(x, y);
+            if (sq) {
+                Bit* bit = PieceForPlayer(playerNumber, piece);
+                if (bit) {
+                    // Set gameTag: white 0..6, black 128+0..6 (index by ChessPiece enum)
+                    int tag = (isWhite ? 0 : 128) + static_cast<int>(piece);
+                    bit->setGameTag(tag);
+                    bit->setPosition(sq->getPosition());
+                    sq->setBit(bit);
+                }
+            }
+            x += 1;
+        }
+    }
 }
 
 bool Chess::actionForEmptyHolder(BitHolder &holder)
