@@ -127,7 +127,76 @@ bool Chess::canBitMoveFrom(Bit &bit, BitHolder &src)
 
 bool Chess::canBitMoveFromTo(Bit &bit, BitHolder &src, BitHolder &dst)
 {
-    return true;
+    // Get source and destination positions
+    ChessSquare* srcSquare = dynamic_cast<ChessSquare*>(&src);
+    ChessSquare* dstSquare = dynamic_cast<ChessSquare*>(&dst);
+    
+    if (!srcSquare || !dstSquare) {
+        return false;
+    }
+
+    int srcX = srcSquare->getColumn();
+    int srcY = srcSquare->getRow();
+    int dstX = dstSquare->getColumn();
+    int dstY = dstSquare->getRow();
+
+    // Get the piece type and color from the game tag
+    int pieceType = bit.gameTag() & 0x7F;  // Lower 7 bits for piece type
+    bool isWhite = (bit.gameTag() & 0x80) == 0;  // Check if it's white's piece
+    int direction = isWhite ? 1 : -1;  // White moves up (increasing y), black moves down (decreasing y)
+    
+    // Check if the destination has a friendly piece
+    if (dst.bit() && dst.bit()->getOwner() == bit.getOwner()) {
+        return false;
+    }
+
+    // Handle movement based on piece type
+    switch (pieceType) {
+        case Pawn: {
+            // Pawns move forward one square, or two squares from starting position
+            int startRank = isWhite ? 1 : 6;
+            int forwardOne = srcY + direction;
+            int forwardTwo = srcY + 2 * direction;
+            
+            // Check for forward move (no capture)
+            if (srcX == dstX && !dst.bit()) {
+                // Move forward one square
+                if (dstY == forwardOne) {
+                    return true;
+                }
+                // Move forward two squares from starting position
+                if (srcY == startRank && dstY == forwardTwo && !_grid->getSquare(dstX, forwardOne)->bit()) {
+                    return true;
+                }
+            }
+            // Check for capture (diagonal)
+            else if (abs(dstX - srcX) == 1 && dstY == forwardOne) {
+                // Can capture if there's an opponent's piece at the destination
+                if (dst.bit() && dst.bit()->getOwner() != bit.getOwner()) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        case Knight: {
+            // Knight moves in L-shape: 2 in one direction, then 1 perpendicular
+            int dx = abs(dstX - srcX);
+            int dy = abs(dstY - srcY);
+            return (dx == 2 && dy == 1) || (dx == 1 && dy == 2);
+        }
+        
+        case King: {
+            // King moves one square in any direction
+            int dx = abs(dstX - srcX);
+            int dy = abs(dstY - srcY);
+            return dx <= 1 && dy <= 1 && (dx != 0 || dy != 0);
+        }
+        
+        default:
+            // Other pieces not implemented yet
+            return false;
+    }
 }
 
 void Chess::stopGame()
