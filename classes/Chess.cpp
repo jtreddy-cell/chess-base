@@ -111,6 +111,107 @@ void Chess::FENtoBoard(const std::string& fen) {
     }
 }
 
+std::string Chess::generateFENFromBoard() {
+    std::string fen = "";
+    
+    for (int y = 7; y >= 0; y--) {
+        int emptyCount = 0;
+        
+        for (int x = 0; x < 8; x++) {
+            ChessSquare* square = _grid->getSquare(x, y);
+            if (square && square->bit()) {
+                // If we have empty squares before this piece, add the count
+                if (emptyCount > 0) {
+                    fen += std::to_string(emptyCount);
+                    emptyCount = 0;
+                }
+                
+                // Add piece notation
+                char pieceChar = pieceNotation(x, y);
+                if (pieceChar != ' ') {
+                    fen += pieceChar;
+                }
+            } else {
+                emptyCount++;
+            }
+        }
+        
+        // Add remaining empty squares at the end of the rank
+        if (emptyCount > 0) {
+            fen += std::to_string(emptyCount);
+        }
+        
+        // Add rank separator except for the last rank
+        if (y > 0) {
+            fen += "/";
+        }
+    }
+    
+    return fen;
+}
+
+void Chess::rebuildBoardFromFEN() {
+    // Use the same format as stateString() for consistency
+    std::string currentState = stateString();
+    
+    // Clear existing pieces first
+    _grid->forEachSquare([](ChessSquare* square, int x, int y) {
+        square->destroyBit();
+    });
+    
+    // Rebuild from the state string (64-character format)
+    for (int y = 0; y < 8; y++) {
+        for (int x = 0; x < 8; x++) {
+            int index = y * 8 + x;
+            if (index < currentState.length()) {
+                char c = currentState[index];
+                if (c != '0') {  // '0' represents empty square
+                    // Determine piece type and color from character
+                    bool isWhite = std::isupper(static_cast<unsigned char>(c)) != 0;
+                    char lower = (char)std::tolower(static_cast<unsigned char>(c));
+                    
+                    ChessPiece piece = NoPiece;
+                    switch (lower) {
+                        case 'p': piece = Pawn; break;
+                        case 'n': piece = Knight; break;
+                        case 'b': piece = Bishop; break;
+                        case 'r': piece = Rook; break;
+                        case 'q': piece = Queen; break;
+                        case 'k': piece = King; break;
+                        default: piece = NoPiece; break;
+                    }
+                    
+                    if (piece != NoPiece) {
+                        int playerNumber = isWhite ? 0 : 1;
+                        ChessSquare* sq = _grid->getSquare(x, y);
+                        if (sq) {
+                            Bit* bit = PieceForPlayer(playerNumber, piece);
+                            if (bit) {
+                                // Set gameTag: white 0..6, black 128+0..6 (index by ChessPiece enum)
+                                int tag = (isWhite ? 0 : 128) + static_cast<int>(piece);
+                                bit->setGameTag(tag);
+                                bit->setPosition(sq->getPosition());
+                                sq->setBit(bit);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void Chess::bitMovedFromTo(Bit &bit, BitHolder &src, BitHolder &dst) {
+    // Increment move count for manual moves too
+    _moveCount++;
+    
+    // Rebuild board from FEN to ensure visual consistency
+    rebuildBoardFromFEN();
+    
+    // End the turn
+    endTurn();
+}
+
 bool Chess::actionForEmptyHolder(BitHolder &holder)
 {
     return false;
@@ -119,9 +220,13 @@ bool Chess::actionForEmptyHolder(BitHolder &holder)
 bool Chess::canBitMoveFrom(Bit &bit, BitHolder &src)
 {
     // need to implement friendly/unfriendly in bit so for now this hack
-    int currentPlayer = getCurrentPlayer()->playerNumber() * 128;
-    int pieceColor = bit.gameTag() & 128;
-    if (pieceColor == currentPlayer) return true;
+    int currentPlayer = getCurrentPlayer()->playerNumber();
+    int pieceColor = bit.gameTag() & 128;  // 0 for white, 128 for black
+    
+    // Player 0 (white) moves pieces with gameTag < 128
+    // Player 1 (black) moves pieces with gameTag >= 128
+    if (currentPlayer == 0 && pieceColor == 0) return true;   // White player moving white piece
+    if (currentPlayer == 1 && pieceColor == 128) return true;  // Black player moving black piece
     return false;
 }
 
@@ -255,4 +360,194 @@ void Chess::setStateString(const std::string &s)
             square->setBit(nullptr);
         }
     });
+}
+
+// Move Generator Implementation
+std::vector<Chess::Move> Chess::generateAllMoves(int playerNumber)
+{
+    std::vector<Move> allMoves;
+    
+    _grid->forEachSquare([&](ChessSquare* square, int x, int y) {
+        Bit* piece = square->bit();
+        if (!piece) return;
+        
+        // Check if this piece belongs to the current player
+        int pieceColor = piece->gameTag() & 128;
+        bool isWhitePiece = (pieceColor == 0);
+        bool isPlayerWhite = (playerNumber == 0);
+        
+        if (isWhitePiece == isPlayerWhite) {
+            int pieceType = piece->gameTag() & 0x7F;
+            
+            switch (pieceType) {
+                case Pawn:
+                    for (auto move : generatePawnMoves(x, y, piece)) {
+                        allMoves.push_back(move);
+                    }
+                    break;
+                case Knight:
+                    for (auto move : generateKnightMoves(x, y, piece)) {
+                        allMoves.push_back(move);
+                    }
+                    break;
+                case King:
+                    for (auto move : generateKingMoves(x, y, piece)) {
+                        allMoves.push_back(move);
+                    }
+                    break;
+                // TODO: Add Bishop, Rook, Queen moves when implemented
+                default:
+                    break;
+            }
+        }
+    });
+    
+    return allMoves;
+}
+
+std::vector<Chess::Move> Chess::generatePawnMoves(int x, int y, Bit* piece)
+{
+    std::vector<Move> moves;
+    bool isWhite = (piece->gameTag() & 128) == 0;
+    int direction = isWhite ? 1 : -1;
+    int startRank = isWhite ? 1 : 6;
+    
+    // Forward one square
+    int newY = y + direction;
+    if (newY >= 0 && newY < 8) {
+        ChessSquare* targetSquare = _grid->getSquare(x, newY);
+        if (targetSquare && !targetSquare->bit()) {
+            moves.push_back(Move(x, y, x, newY, _grid->getSquare(x, y), targetSquare, piece));
+        }
+    }
+    
+    // Forward two squares from starting position
+    if (y == startRank) {
+        newY = y + 2 * direction;
+        int middleY = y + direction;
+        if (newY >= 0 && newY < 8) {
+            ChessSquare* targetSquare = _grid->getSquare(x, newY);
+            ChessSquare* middleSquare = _grid->getSquare(x, middleY);
+            if (targetSquare && middleSquare && !targetSquare->bit() && !middleSquare->bit()) {
+                moves.push_back(Move(x, y, x, newY, _grid->getSquare(x, y), targetSquare, piece));
+            }
+        }
+    }
+    
+    // Diagonal captures
+    for (int dx = -1; dx <= 1; dx += 2) {
+        int newX = x + dx;
+        newY = y + direction;
+        if (newX >= 0 && newX < 8 && newY >= 0 && newY < 8) {
+            ChessSquare* targetSquare = _grid->getSquare(newX, newY);
+            if (targetSquare && targetSquare->bit() && targetSquare->bit()->getOwner() != piece->getOwner()) {
+                moves.push_back(Move(x, y, newX, newY, _grid->getSquare(x, y), targetSquare, piece));
+            }
+        }
+    }
+    
+    return moves;
+}
+
+std::vector<Chess::Move> Chess::generateKnightMoves(int x, int y, Bit* piece)
+{
+    std::vector<Move> moves;
+    int knightMoves[8][2] = {{2,1}, {2,-1}, {-2,1}, {-2,-1}, {1,2}, {1,-2}, {-1,2}, {-1,-2}};
+    
+    for (auto& move : knightMoves) {
+        int newX = x + move[0];
+        int newY = y + move[1];
+        
+        if (newX >= 0 && newX < 8 && newY >= 0 && newY < 8) {
+            ChessSquare* targetSquare = _grid->getSquare(newX, newY);
+            if (targetSquare && (!targetSquare->bit() || targetSquare->bit()->getOwner() != piece->getOwner())) {
+                moves.push_back(Move(x, y, newX, newY, _grid->getSquare(x, y), targetSquare, piece));
+            }
+        }
+    }
+    
+    return moves;
+}
+
+std::vector<Chess::Move> Chess::generateKingMoves(int x, int y, Bit* piece)
+{
+    std::vector<Move> moves;
+    
+    // King moves one square in any direction
+    for (int dx = -1; dx <= 1; dx++) {
+        for (int dy = -1; dy <= 1; dy++) {
+            if (dx == 0 && dy == 0) continue;
+            
+            int newX = x + dx;
+            int newY = y + dy;
+            
+            if (newX >= 0 && newX < 8 && newY >= 0 && newY < 8) {
+                ChessSquare* targetSquare = _grid->getSquare(newX, newY);
+                if (targetSquare && (!targetSquare->bit() || targetSquare->bit()->getOwner() != piece->getOwner())) {
+                    moves.push_back(Move(x, y, newX, newY, _grid->getSquare(x, y), targetSquare, piece));
+                }
+            }
+        }
+    }
+    
+    return moves;
+}
+
+bool Chess::isValidMove(int playerNumber, int fromX, int fromY, int toX, int toY)
+{
+    ChessSquare* fromSquare = _grid->getSquare(fromX, fromY);
+    ChessSquare* toSquare = _grid->getSquare(toX, toY);
+    
+    if (!fromSquare || !toSquare || !fromSquare->bit()) {
+        return false;
+    }
+    
+    Bit* piece = fromSquare->bit();
+    return canBitMoveFromTo(*piece, *fromSquare, *toSquare);
+}
+
+void Chess::makeRandomMove(int playerNumber)
+{   
+    _moveCount++;
+    
+    std::vector<Move> allMoves = generateAllMoves(playerNumber);
+    
+    if (allMoves.empty()) {
+        return; // No moves available
+    }
+    
+    // Select a random move
+    int randomIndex = rand() % allMoves.size();
+    Move selectedMove = allMoves[randomIndex];
+    
+    // Execute the move
+    if (selectedMove.fromSquare && selectedMove.toSquare && selectedMove.piece) {
+        // Remove piece from destination if there's a capture
+        if (selectedMove.toSquare->bit()) {
+            selectedMove.toSquare->destroyBit();
+        }
+        
+        // Move the piece
+        selectedMove.toSquare->setBit(selectedMove.piece);
+        selectedMove.fromSquare->setBit(nullptr);
+        
+        // Rebuild board from FEN to ensure visual consistency
+        rebuildBoardFromFEN();
+        
+        // End the turn
+        endTurn();
+    }
+}
+
+std::vector<std::pair<int,int>> Chess::getAllValidMovesForCurrentPlayer()
+{
+    std::vector<std::pair<int,int>> validMoves;
+    int currentPlayer = getCurrentPlayer()->playerNumber();
+    std::vector<Move> allMoves = generateAllMoves(currentPlayer);
+    
+    for (const auto& move : allMoves) {
+        validMoves.push_back({move.toX, move.toY});
+    }
+    
+    return validMoves;
 }
