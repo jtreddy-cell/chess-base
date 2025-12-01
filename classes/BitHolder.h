@@ -18,6 +18,8 @@ public:
 	Bit *bit();
 	// set the current piece
 	void setBit(Bit *bit);
+    // release the current piece (return it and set to nullptr) without destroying it
+    Bit *releaseBit();
 	// destroy the current piece, triggering any associated animations
 	void destroyBit();
 	// gametag can be used by games for any purpose

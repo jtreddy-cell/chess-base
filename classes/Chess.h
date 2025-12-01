@@ -72,6 +72,9 @@ private:
     std::vector<Move> generateAllMoves(int playerNumber);
     std::vector<Move> generatePawnMoves(int x, int y, Bit* piece);
     std::vector<Move> generateKnightMoves(int x, int y, Bit* piece);
+    std::vector<Move> generateRookMoves(int x, int y, Bit* piece);
+    std::vector<Move> generateBishopMoves(int x, int y, Bit* piece);
+    std::vector<Move> generateQueenMoves(int x, int y, Bit* piece);
     std::vector<Move> generateKingMoves(int x, int y, Bit* piece);
     bool isValidMove(int playerNumber, int fromX, int fromY, int toX, int toY);
     void makeRandomMove(int playerNumber);
@@ -80,4 +83,21 @@ private:
     
     // Move counter for debugging
     int _moveCount = 0;
+    
+    // Castling rights: whiteKingside, whiteQueenside, blackKingside, blackQueenside
+    bool _castlingRights[4] = {true, true, true, true};
+    
+    // Track if kings have moved
+    bool _whiteKingMoved = false;
+    bool _blackKingMoved = false;
+    
+    // Track if rooks have moved (indexed by their starting positions)
+    bool _whiteKingsideRookMoved = false;
+    bool _whiteQueensideRookMoved = false;
+    bool _blackKingsideRookMoved = false;
+    bool _blackQueensideRookMoved = false;
+    
+    // Helper methods for castling
+    bool isSquareUnderAttack(int x, int y, bool byWhite);
+    bool wouldKingBeInCheckAfterMove(int fromX, int fromY, int toX, int toY, int playerNumber);
 };

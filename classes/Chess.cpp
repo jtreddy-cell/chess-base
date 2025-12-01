@@ -2,6 +2,7 @@
 #include <limits>
 #include <cmath>
 #include <cctype>
+#include <iostream>
 
 Chess::Chess()
 {
@@ -17,7 +18,13 @@ char Chess::pieceNotation(int x, int y) const
 {
     const char *wpieces = { "0PNBRQK" };
     const char *bpieces = { "0pnbrqk" };
-    Bit *bit = _grid->getSquare(x, y)->bit();
+    
+    ChessSquare* square = _grid->getSquare(x, y);
+    if (!square) {
+        return '0';  // Empty square if grid position is invalid
+    }
+    
+    Bit *bit = square->bit();
     char notation = '0';
     if (bit) {
         notation = bit->gameTag() < 128 ? wpieces[bit->gameTag()] : bpieces[bit->gameTag()-128];
@@ -202,11 +209,85 @@ void Chess::rebuildBoardFromFEN() {
 }
 
 void Chess::bitMovedFromTo(Bit &bit, BitHolder &src, BitHolder &dst) {
+    // Get piece type and color
+    int pieceType = bit.gameTag() & 0x7F;
+    bool isWhite = (bit.gameTag() & 0x80) == 0;
+    
+    // Track king and rook movements
+    if (pieceType == King) {
+        if (isWhite) {
+            _whiteKingMoved = true;
+            _castlingRights[0] = false; // White kingside
+            _castlingRights[1] = false; // White queenside
+        } else {
+            _blackKingMoved = true;
+            _castlingRights[2] = false; // Black kingside
+            _castlingRights[3] = false; // Black queenside
+        }
+    } 
+    // Track rook movements
+    else if (pieceType == Rook) {
+        ChessSquare* srcSquare = dynamic_cast<ChessSquare*>(&src);
+        if (srcSquare) {
+            int x = srcSquare->getColumn();
+            int y = srcSquare->getRow();
+            
+            if (isWhite) {
+                if (x == 0 && y == 0) _whiteQueensideRookMoved = true;
+                else if (x == 7 && y == 0) _whiteKingsideRookMoved = true;
+            } else {
+                if (x == 0 && y == 7) _blackQueensideRookMoved = true;
+                else if (x == 7 && y == 7) _blackKingsideRookMoved = true;
+            }
+            
+            // Update castling rights if a rook moves from its starting position
+            if (y == (isWhite ? 0 : 7)) {
+                if (x == 0) _castlingRights[isWhite ? 1 : 3] = false; // Queenside
+                else if (x == 7) _castlingRights[isWhite ? 0 : 2] = false; // Kingside
+            }
+        }
+    }
+    
+    // Handle castling - move the rook
+    ChessSquare* srcSquare = dynamic_cast<ChessSquare*>(&src);
+    ChessSquare* dstSquare = dynamic_cast<ChessSquare*>(&dst);
+    
+    if (!srcSquare || !dstSquare) {
+        _moveCount++;
+        endTurn();
+        return;
+    }
+    
+    if (pieceType == King && 
+        abs(srcSquare->getColumn() - dstSquare->getColumn()) == 2) {
+        // This is a castling move
+        bool kingside = (dstSquare->getColumn() > srcSquare->getColumn());
+        int row = isWhite ? 0 : 7;
+        
+        // Get rook squares
+        int rookFromCol = kingside ? 7 : 0;
+        int rookToCol = kingside ? 5 : 3;
+        
+        ChessSquare* rookSquare = _grid->getSquare(rookFromCol, row);
+        ChessSquare* newRookSquare = _grid->getSquare(rookToCol, row);
+        
+        // Verify all squares exist and rook is present
+        if (rookSquare && newRookSquare && rookSquare->bit()) {
+            Bit* rook = rookSquare->bit();
+            
+            // Verify it's actually a rook
+            int rookType = rook->gameTag() & 0x7F;
+            if (rookType == Rook) {
+                // Move the rook safely using releaseBit() to avoid deletion
+                rookSquare->releaseBit(); 
+                newRookSquare->setBit(rook);
+                rook->setPosition(newRookSquare->getPosition());
+            }
+        }
+    }
+    
     // Increment move count for manual moves too
     _moveCount++;
-    
-    // Rebuild board from FEN to ensure visual consistency
-    rebuildBoardFromFEN();
     
     // End the turn
     endTurn();
@@ -244,6 +325,8 @@ bool Chess::canBitMoveFromTo(Bit &bit, BitHolder &src, BitHolder &dst)
     int srcY = srcSquare->getRow();
     int dstX = dstSquare->getColumn();
     int dstY = dstSquare->getRow();
+    
+    // std::cout << "Checking move from " << srcX << "," << srcY << " to " << dstX << "," << dstY << std::endl;
 
     // Get the piece type and color from the game tag
     int pieceType = bit.gameTag() & 0x7F;  // Lower 7 bits for piece type
@@ -292,10 +375,120 @@ bool Chess::canBitMoveFromTo(Bit &bit, BitHolder &src, BitHolder &dst)
         }
         
         case King: {
-            // King moves one square in any direction
+            // Check for castling
+            int dx = dstX - srcX;
+            int dy = dstY - srcY;
+            
+            // Normal king move (one square in any direction)
+            if (abs(dx) <= 1 && abs(dy) <= 1) {
+                return true;
+            }
+            
+            // Check for castling (2 squares horizontally)
+            if (abs(dx) == 2 && dy == 0) {
+                bool kingside = (dx > 0);
+                int row = isWhite ? 0 : 7;
+                int playerIndex = isWhite ? 0 : 2;
+                
+                // Check if castling is allowed for this side
+                if (!_castlingRights[playerIndex + (kingside ? 0 : 1)]) {
+                    return false;
+                }
+                
+                // Check if squares between king and rook are empty
+                int checkStart = kingside ? srcX + 1 : 1;
+                int checkEnd = kingside ? dstX : srcX;
+                
+                for (int x = checkStart; x < checkEnd; x++) {
+                    ChessSquare* square = _grid->getSquare(x, row);
+                    if (!square || square->bit()) {
+                        return false;  // Path blocked or invalid
+                    }
+                }
+                
+                // NOTE: We don't check isSquareUnderAttack here to avoid infinite recursion
+                // The attack checks are done in generateKingMoves instead
+                return true;
+            }
+            
+            return false;
+        }
+        
+        case Rook: {
+            // Rook moves horizontally or vertically any number of squares
+            if (srcX != dstX && srcY != dstY) {
+                return false; // Must be on the same rank or file
+            }
+            
+            int stepX = (dstX > srcX) ? 1 : (dstX < srcX) ? -1 : 0;
+            int stepY = (dstY > srcY) ? 1 : (dstY < srcY) ? -1 : 0;
+            
+            // Check if the path is clear
+            int x = srcX + stepX;
+            int y = srcY + stepY;
+            while (x != dstX || y != dstY) {
+                if (_grid->getSquare(x, y)->bit()) {
+                    return false; // Path is blocked
+                }
+                x += stepX;
+                y += stepY;
+            }
+            
+            return true;
+        }
+        
+        case Bishop: {
+            // Bishop moves diagonally any number of squares
             int dx = abs(dstX - srcX);
             int dy = abs(dstY - srcY);
-            return dx <= 1 && dy <= 1 && (dx != 0 || dy != 0);
+            
+            // Must move diagonally (equal x and y distance)
+            if (dx != dy) {
+                return false;
+            }
+            
+            int stepX = (dstX > srcX) ? 1 : -1;
+            int stepY = (dstY > srcY) ? 1 : -1;
+            
+            // Check if the path is clear
+            int x = srcX + stepX;
+            int y = srcY + stepY;
+            while (x != dstX && y != dstY) {  // Only need to check one coordinate since they change at the same rate
+                if (_grid->getSquare(x, y)->bit()) {
+                    return false; // Path is blocked
+                }
+                x += stepX;
+                y += stepY;
+            }
+            
+            return true;
+        }
+        
+        case Queen: {
+            // Queen combines rook and bishop movement
+            int dx = abs(dstX - srcX);
+            int dy = abs(dstY - srcY);
+            
+            // Must move in a straight line (same rank, file, or diagonal)
+            if (dx != 0 && dy != 0 && dx != dy) {
+                return false;
+            }
+            
+            int stepX = (dstX > srcX) ? 1 : (dstX < srcX) ? -1 : 0;
+            int stepY = (dstY > srcY) ? 1 : (dstY < srcY) ? -1 : 0;
+            
+            // Check if the path is clear
+            int x = srcX + stepX;
+            int y = srcY + stepY;
+            while (x != dstX || y != dstY) {
+                if (_grid->getSquare(x, y)->bit()) {
+                    return false; // Path is blocked
+                }
+                x += stepX;
+                y += stepY;
+            }
+            
+            return true;
         }
         
         default:
@@ -395,7 +588,21 @@ std::vector<Chess::Move> Chess::generateAllMoves(int playerNumber)
                         allMoves.push_back(move);
                     }
                     break;
-                // TODO: Add Bishop, Rook, Queen moves when implemented
+                case Rook:
+                    for (auto move : generateRookMoves(x, y, piece)) {
+                        allMoves.push_back(move);
+                    }
+                    break;
+                case Bishop:
+                    for (auto move : generateBishopMoves(x, y, piece)) {
+                        allMoves.push_back(move);
+                    }
+                    break;
+                case Queen:
+                    for (auto move : generateQueenMoves(x, y, piece)) {
+                        allMoves.push_back(move);
+                    }
+                    break;
                 default:
                     break;
             }
@@ -490,6 +697,49 @@ std::vector<Chess::Move> Chess::generateKingMoves(int x, int y, Bit* piece)
         }
     }
     
+    // Check for castling
+    bool isWhite = (piece->gameTag() & 0x80) == 0;
+    int row = isWhite ? 0 : 7;
+    int playerIndex = isWhite ? 0 : 2; // 0=white, 2=black for _castlingRights
+    
+    // Kingside castling
+    if (_castlingRights[playerIndex]) {
+        bool canCastle = true;
+        // Check if squares between king and rook are empty
+        for (int i = x + 1; i < 7; i++) {
+            if (_grid->getSquare(i, row)->bit()) {
+                canCastle = false;
+                break;
+            }
+        }
+        // Check if squares king moves through are not under attack
+        if (canCastle && !isSquareUnderAttack(x, y, !isWhite) && 
+            !isSquareUnderAttack(x + 1, row, !isWhite) && 
+            !isSquareUnderAttack(x + 2, row, !isWhite)) {
+            ChessSquare* targetSquare = _grid->getSquare(x + 2, row);
+            moves.push_back(Move(x, y, x + 2, row, _grid->getSquare(x, y), targetSquare, piece));
+        }
+    }
+    
+    // Queenside castling
+    if (_castlingRights[playerIndex + 1]) {
+        bool canCastle = true;
+        // Check if squares between king and rook are empty
+        for (int i = x - 1; i > 0; i--) {
+            if (_grid->getSquare(i, row)->bit()) {
+                canCastle = false;
+                break;
+            }
+        }
+        // Check if squares king moves through are not under attack
+        if (canCastle && !isSquareUnderAttack(x, y, !isWhite) && 
+            !isSquareUnderAttack(x - 1, row, !isWhite) && 
+            !isSquareUnderAttack(x - 2, row, !isWhite)) {
+            ChessSquare* targetSquare = _grid->getSquare(x - 2, row);
+            moves.push_back(Move(x, y, x - 2, row, _grid->getSquare(x, y), targetSquare, piece));
+        }
+    }
+    
     return moves;
 }
 
@@ -531,9 +781,6 @@ void Chess::makeRandomMove(int playerNumber)
         selectedMove.toSquare->setBit(selectedMove.piece);
         selectedMove.fromSquare->setBit(nullptr);
         
-        // Rebuild board from FEN to ensure visual consistency
-        rebuildBoardFromFEN();
-        
         // End the turn
         endTurn();
     }
@@ -551,3 +798,175 @@ std::vector<std::pair<int,int>> Chess::getAllValidMovesForCurrentPlayer()
     
     return validMoves;
 }
+
+bool Chess::isSquareUnderAttack(int x, int y, bool byWhite) {
+    // Check if any of the opponent's pieces can move to (x,y)
+    for (int i = 0; i < 8; i++) {
+        for (int j = 0; j < 8; j++) {
+            ChessSquare* square = _grid->getSquare(i, j);
+            if (!square || !square->bit()) continue;
+            
+            // Only check pieces of the attacking color
+            bool pieceIsWhite = (square->bit()->gameTag() & 0x80) == 0;
+            if (pieceIsWhite != byWhite) continue;
+            
+            // Skip if it's a king (to avoid infinite recursion)
+            int pieceType = square->bit()->gameTag() & 0x7F;
+            if (pieceType == King) continue;
+            
+            // Check if this piece can attack the target square
+            ChessSquare* targetSquare = _grid->getSquare(x, y);
+            if (targetSquare && canBitMoveFromTo(*square->bit(), *square, *targetSquare)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool Chess::wouldKingBeInCheckAfterMove(int fromX, int fromY, int toX, int toY, int playerNumber) {
+    // Temporarily make the move
+    ChessSquare* fromSquare = _grid->getSquare(fromX, fromY);
+    ChessSquare* toSquare = _grid->getSquare(toX, toY);
+    if (!fromSquare || !toSquare || !fromSquare->bit()) return true;
+    
+    // Save the original state
+    Bit* movingPiece = fromSquare->bit();
+    Bit* capturedPiece = toSquare->bit();
+    
+    // Make the move
+    fromSquare->setBit(nullptr);
+    toSquare->setBit(movingPiece);
+    
+    // Find the king's position
+    int kingX = -1, kingY = -1;
+    bool kingFound = false;
+    
+    for (int y = 0; y < 8 && !kingFound; y++) {
+        for (int x = 0; x < 8; x++) {
+            ChessSquare* square = _grid->getSquare(x, y);
+            if (square && square->bit()) {
+                int pieceType = square->bit()->gameTag() & 0x7F;
+                bool pieceIsWhite = (square->bit()->gameTag() & 0x80) == 0;
+                if (pieceType == King && pieceIsWhite == (playerNumber == 0)) {
+                    kingX = x;
+                    kingY = y;
+                    kingFound = true;
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Check if the king is in check
+    bool inCheck = false;
+    if (kingFound) {
+        inCheck = isSquareUnderAttack(kingX, kingY, playerNumber != 0);
+    }
+    
+    // Undo the move
+    fromSquare->setBit(movingPiece);
+    toSquare->setBit(capturedPiece);
+    
+    return inCheck;
+}
+
+std::vector<Chess::Move> Chess::generateRookMoves(int x, int y, Bit* piece)
+{
+    std::vector<Move> moves;
+    
+    // Directions: right, left, up, down
+    int directions[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    
+    for (auto& dir : directions) {
+        int dx = dir[0];
+        int dy = dir[1];
+        int newX = x + dx;
+        int newY = y + dy;
+        
+        // Move in the current direction until we hit the edge of the board or a piece
+        while (newX >= 0 && newX < 8 && newY >= 0 && newY < 8) {
+            ChessSquare* targetSquare = _grid->getSquare(newX, newY);
+            if (!targetSquare) break;
+            
+            Bit* targetPiece = targetSquare->bit();
+            
+            // If the square is empty, add the move and continue
+            if (!targetPiece) {
+                moves.push_back(Move(x, y, newX, newY, _grid->getSquare(x, y), targetSquare, piece));
+            } 
+            // If the square has an opponent's piece, add the capture and stop in this direction
+            else if (targetPiece->getOwner() != piece->getOwner()) {
+                moves.push_back(Move(x, y, newX, newY, _grid->getSquare(x, y), targetSquare, piece));
+                break;
+            } 
+            // If it's our own piece, stop in this direction
+            else {
+                break;
+            }
+            
+            newX += dx;
+            newY += dy;
+        }
+    }
+    
+    return moves;
+}
+
+std::vector<Chess::Move> Chess::generateBishopMoves(int x, int y, Bit* piece)
+{
+    std::vector<Move> moves;
+    
+    // Directions: top-right, top-left, bottom-right, bottom-left
+    int directions[4][2] = {{1, 1}, {-1, 1}, {1, -1}, {-1, -1}};
+    
+    for (auto& dir : directions) {
+        int dx = dir[0];
+        int dy = dir[1];
+        int newX = x + dx;
+        int newY = y + dy;
+        
+        // Move in the current diagonal direction until we hit the edge of the board or a piece
+        while (newX >= 0 && newX < 8 && newY >= 0 && newY < 8) {
+            ChessSquare* targetSquare = _grid->getSquare(newX, newY);
+            if (!targetSquare) break;
+            
+            Bit* targetPiece = targetSquare->bit();
+            
+            // If the square is empty, add the move and continue
+            if (!targetPiece) {
+                moves.push_back(Move(x, y, newX, newY, _grid->getSquare(x, y), targetSquare, piece));
+            } 
+            // If the square has an opponent's piece, add the capture and stop in this direction
+            else if (targetPiece->getOwner() != piece->getOwner()) {
+                moves.push_back(Move(x, y, newX, newY, _grid->getSquare(x, y), targetSquare, piece));
+                break;
+            } 
+            // If it's our own piece, stop in this direction
+            else {
+                break;
+            }
+            
+            newX += dx;
+            newY += dy;
+        }
+    }
+    
+    return moves;
+}
+
+std::vector<Chess::Move> Chess::generateQueenMoves(int x, int y, Bit* piece)
+{
+    std::vector<Move> moves;
+    
+    // Queen moves are a combination of rook and bishop moves
+    auto rookMoves = generateRookMoves(x, y, piece);
+    auto bishopMoves = generateBishopMoves(x, y, piece);
+    
+    // Combine both move sets
+    moves.insert(moves.end(), rookMoves.begin(), rookMoves.end());
+    moves.insert(moves.end(), bishopMoves.begin(), bishopMoves.end());
+    
+    return moves;
+}
+
