@@ -13,7 +13,8 @@ namespace ClassGame {
         Game *game = nullptr;
         bool gameOver = false;
         int gameWinner = -1;
-        bool automatedGameplay = false;
+        bool whiteAI = false;
+        bool blackAI = false;
 
         //
         // game starting point
@@ -22,7 +23,8 @@ namespace ClassGame {
         void GameStartUp() 
         {
             game = nullptr;
-            automatedGameplay = false;
+            whiteAI = false;
+            blackAI = false;
         }
 
         //
@@ -48,7 +50,8 @@ namespace ClassGame {
                         game->setUpBoard();
                         gameOver = false;
                         gameWinner = -1;
-                        automatedGameplay = false;
+                        whiteAI = false;
+                        blackAI = false;
                     }
                 }
                 if (!game) {
@@ -71,7 +74,8 @@ namespace ClassGame {
                     if (ImGui::Button("Start Chess")) {
                         game = new Chess();
                         game->setUpBoard();
-                        automatedGameplay = false;
+                        whiteAI = false;
+                        blackAI = false;
                     }
                 } else {
                     ImGui::Text("Current Player Number: %d", game->getCurrentPlayer()->playerNumber());
@@ -86,21 +90,8 @@ namespace ClassGame {
                     
                     // Add automated gameplay button for Chess
                     if (chessGame) {
-                        if (automatedGameplay) {
-                            if (ImGui::Button("Stop Automated Gameplay")) {
-                                automatedGameplay = false;
-                            }
-                            
-                            // Auto-stop when 20 moves reached
-                            if (chessGame->getMoveCount() >= 20) {
-                                automatedGameplay = false;
-                                ImGui::Text("Automated gameplay stopped at 20 moves");
-                            }
-                        } else {
-                            if (ImGui::Button("Start Automated Gameplay")) {
-                                automatedGameplay = true;
-                            }
-                        }
+                        ImGui::Checkbox("White AI", &whiteAI);
+                        ImGui::Checkbox("Black AI", &blackAI);
                         
                         // Show move count
                         ImGui::Text("Move Count: %d", chessGame->getMoveCount());
@@ -116,8 +107,11 @@ namespace ClassGame {
                     }
                     
                     // Handle automated gameplay for Chess
-                    if (automatedGameplay && chessGame && !gameOver) {
-                        chessGame->makeRandomMoveForCurrentPlayer();
+                    if (chessGame && !gameOver) {
+                        int currentPlayer = game->getCurrentPlayer()->playerNumber();
+                        if ((currentPlayer == 0 && whiteAI) || (currentPlayer == 1 && blackAI)) {
+                            chessGame->makeRandomMoveForCurrentPlayer();
+                        }
                     }
                     
                     game->drawFrame();

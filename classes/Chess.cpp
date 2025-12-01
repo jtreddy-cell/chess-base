@@ -894,6 +894,9 @@ void Chess::makeRandomMove(int playerNumber)
         selectedMove.toSquare->setBit(selectedMove.piece);
         selectedMove.fromSquare->setBit(nullptr);
         
+        // Update the visual position of the piece
+        selectedMove.piece->setPosition(selectedMove.toSquare->getPosition());
+        
         // End the turn
         endTurn();
     }
