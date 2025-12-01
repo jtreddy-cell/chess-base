@@ -15,6 +15,11 @@ This will allow you to quickly check that your castling, promotion and en passan
 Added movement for the Knight, King, and Pawn. Used a switch statement to handle the different piece types and their movement patterns. Other pieces can't move at all right now as they don't have cases in the switch statement.
 
 TODO:
-Movement for rest of pieces DONE
-Special cases for castling, en passant, and promotion
+Bishop movement DONE
+Rook movement DONE
+Queen movement DONE
+Castling DONE
+En passant DONE
+Promotion
+Check/Checkmate
 Negamax with ab pruning

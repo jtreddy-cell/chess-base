@@ -212,6 +212,39 @@ void Chess::bitMovedFromTo(Bit &bit, BitHolder &src, BitHolder &dst) {
     // Get piece type and color
     int pieceType = bit.gameTag() & 0x7F;
     bool isWhite = (bit.gameTag() & 0x80) == 0;
+
+    // Handle En Passant Capture
+    if (pieceType == Pawn) {
+        ChessSquare* dstSquare = dynamic_cast<ChessSquare*>(&dst);
+        if (dstSquare && _enPassantColumn != -1 && 
+            dstSquare->getColumn() == _enPassantColumn && 
+            dstSquare->getRow() == _enPassantTargetRow) {
+            
+            ChessSquare* capturedSquare = _grid->getSquare(_enPassantColumn, _enPassantRow);
+            if (capturedSquare) {
+                capturedSquare->destroyBit();
+            }
+        }
+    }
+
+    // Update En Passant State for next turn
+    int nextEnPassantCol = -1;
+    int nextEnPassantRow = -1;
+    int nextEnPassantTargetRow = -1;
+
+    if (pieceType == Pawn) {
+        ChessSquare* srcSquare = dynamic_cast<ChessSquare*>(&src);
+        ChessSquare* dstSquare = dynamic_cast<ChessSquare*>(&dst);
+        if (srcSquare && dstSquare && abs(srcSquare->getRow() - dstSquare->getRow()) == 2) {
+            nextEnPassantCol = dstSquare->getColumn();
+            nextEnPassantRow = dstSquare->getRow();
+            nextEnPassantTargetRow = (srcSquare->getRow() + dstSquare->getRow()) / 2;
+        }
+    }
+
+    _enPassantColumn = nextEnPassantCol;
+    _enPassantRow = nextEnPassantRow;
+    _enPassantTargetRow = nextEnPassantTargetRow;
     
     // Track king and rook movements
     if (pieceType == King) {
@@ -361,6 +394,10 @@ bool Chess::canBitMoveFromTo(Bit &bit, BitHolder &src, BitHolder &dst)
             else if (abs(dstX - srcX) == 1 && dstY == forwardOne) {
                 // Can capture if there's an opponent's piece at the destination
                 if (dst.bit() && dst.bit()->getOwner() != bit.getOwner()) {
+                    return true;
+                }
+                // En Passant
+                if (_enPassantColumn != -1 && dstX == _enPassantColumn && dstY == _enPassantTargetRow) {
                     return true;
                 }
             }
@@ -653,6 +690,19 @@ std::vector<Chess::Move> Chess::generatePawnMoves(int x, int y, Bit* piece)
         }
     }
     
+    // En Passant
+    if (_enPassantColumn != -1) {
+        if (abs(x - _enPassantColumn) == 1) {
+            int forwardOne = y + direction;
+            if (forwardOne == _enPassantTargetRow) {
+                ChessSquare* targetSquare = _grid->getSquare(_enPassantColumn, _enPassantTargetRow);
+                if (targetSquare && !targetSquare->bit()) {
+                    moves.push_back(Move(x, y, _enPassantColumn, _enPassantTargetRow, _grid->getSquare(x, y), targetSquare, piece));
+                }
+            }
+        }
+    }
+    
     return moves;
 }
 
@@ -837,6 +887,20 @@ bool Chess::wouldKingBeInCheckAfterMove(int fromX, int fromY, int toX, int toY, 
     // Make the move
     fromSquare->setBit(nullptr);
     toSquare->setBit(movingPiece);
+
+    // Handle En Passant simulation
+    Bit* enPassantCapturedPiece = nullptr;
+    ChessSquare* enPassantCapturedSquare = nullptr;
+    
+    if (movingPiece && (movingPiece->gameTag() & 0x7F) == Pawn) {
+        if (_enPassantColumn != -1 && toX == _enPassantColumn && toY == _enPassantTargetRow) {
+             enPassantCapturedSquare = _grid->getSquare(_enPassantColumn, _enPassantRow);
+             if (enPassantCapturedSquare) {
+                 enPassantCapturedPiece = enPassantCapturedSquare->bit();
+                 enPassantCapturedSquare->setBit(nullptr);
+             }
+        }
+    }
     
     // Find the king's position
     int kingX = -1, kingY = -1;
@@ -867,6 +931,10 @@ bool Chess::wouldKingBeInCheckAfterMove(int fromX, int fromY, int toX, int toY, 
     // Undo the move
     fromSquare->setBit(movingPiece);
     toSquare->setBit(capturedPiece);
+
+    if (enPassantCapturedSquare && enPassantCapturedPiece) {
+        enPassantCapturedSquare->setBit(enPassantCapturedPiece);
+    }
     
     return inCheck;
 }

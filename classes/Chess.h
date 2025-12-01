@@ -97,6 +97,11 @@ private:
     bool _blackKingsideRookMoved = false;
     bool _blackQueensideRookMoved = false;
     
+    // En passant tracking
+    int _enPassantColumn = -1;      // Column where en passant is available (-1 if none)
+    int _enPassantRow = -1;         // Row where the vulnerable pawn is located
+    int _enPassantTargetRow = -1;   // Row where the capturing pawn would land
+    
     // Helper methods for castling
     bool isSquareUnderAttack(int x, int y, bool byWhite);
     bool wouldKingBeInCheckAfterMove(int fromX, int fromY, int toX, int toY, int playerNumber);
