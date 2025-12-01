@@ -78,6 +78,13 @@ private:
     std::vector<Move> generateKingMoves(int x, int y, Bit* piece);
     bool isValidMove(int playerNumber, int fromX, int fromY, int toX, int toY);
     void makeRandomMove(int playerNumber);
+    
+    // AI methods
+    int evaluateBoard(int playerNumber);
+    int negamax(int depth, int alpha, int beta, int playerNumber);
+    Move findBestMove(int playerNumber);
+    void makeMove(const Move& move);
+    void unmakeMove(const Move& move, Bit* capturedPiece, int oldEnPassantCol, int oldEnPassantRow, int oldEnPassantTarget);
 
     Grid* _grid;
     

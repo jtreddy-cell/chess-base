@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cctype>
 #include <iostream>
+#include <algorithm>
 
 Chess::Chess()
 {
@@ -593,6 +594,30 @@ Player* Chess::ownerAt(int x, int y) const
 
 Player* Chess::checkForWinner()
 {
+    // First check if either king has been captured (this should never happen in proper chess)
+    bool whiteKingExists = false;
+    bool blackKingExists = false;
+    
+    _grid->forEachSquare([&](ChessSquare* square, int x, int y) {
+        Bit* piece = square->bit();
+        if (piece && (piece->gameTag() & 0x7F) == King) {
+            bool isWhite = (piece->gameTag() & 0x80) == 0;
+            if (isWhite) {
+                whiteKingExists = true;
+            } else {
+                blackKingExists = true;
+            }
+        }
+    });
+    
+    // If a king is missing, the opponent wins
+    if (!whiteKingExists) {
+        return getPlayerAt(1); // Black wins
+    }
+    if (!blackKingExists) {
+        return getPlayerAt(0); // White wins
+    }
+    
     int currentPlayerNum = getCurrentPlayer()->playerNumber();
     
     // Check if current player has any legal moves
@@ -869,33 +894,190 @@ bool Chess::isValidMove(int playerNumber, int fromX, int fromY, int toX, int toY
     return canBitMoveFromTo(*piece, *fromSquare, *toSquare);
 }
 
+// AI Evaluation Function
+int Chess::evaluateBoard(int playerNumber)
+{
+    int score = 0;
+    
+    // Piece values
+    const int PAWN_VALUE = 100;
+    const int KNIGHT_VALUE = 320;
+    const int BISHOP_VALUE = 330;
+    const int ROOK_VALUE = 500;
+    const int QUEEN_VALUE = 900;
+    const int KING_VALUE = 20000;
+    
+    _grid->forEachSquare([&](ChessSquare* square, int x, int y) {
+        Bit* piece = square->bit();
+        if (!piece) return;
+        
+        int pieceType = piece->gameTag() & 0x7F;
+        bool isWhite = (piece->gameTag() & 0x80) == 0;
+        int pieceValue = 0;
+        
+        switch (pieceType) {
+            case Pawn: pieceValue = PAWN_VALUE; break;
+            case Knight: pieceValue = KNIGHT_VALUE; break;
+            case Bishop: pieceValue = BISHOP_VALUE; break;
+            case Rook: pieceValue = ROOK_VALUE; break;
+            case Queen: pieceValue = QUEEN_VALUE; break;
+            case King: pieceValue = KING_VALUE; break;
+            default: pieceValue = 0; break;
+        }
+        
+        // Add to score based on which player owns the piece
+        if ((isWhite && playerNumber == 0) || (!isWhite && playerNumber == 1)) {
+            score += pieceValue;
+        } else {
+            score -= pieceValue;
+        }
+    });
+    
+    return score;
+}
+
+// Helper function to make a move (for search)
+void Chess::makeMove(const Move& move)
+{
+    // Use releaseBit to avoid deleting the captured piece
+    if (move.toSquare->bit()) {
+        move.toSquare->releaseBit();
+    }
+    // Release from source and set to destination
+    move.fromSquare->releaseBit();
+    move.toSquare->setBit(move.piece);
+}
+
+// Helper function to unmake a move (for search)
+void Chess::unmakeMove(const Move& move, Bit* capturedPiece, int oldEnPassantCol, int oldEnPassantRow, int oldEnPassantTarget)
+{
+    // Release the piece from destination
+    move.toSquare->releaseBit();
+    // Restore original positions
+    move.fromSquare->setBit(move.piece);
+    move.toSquare->setBit(capturedPiece);
+    
+    _enPassantColumn = oldEnPassantCol;
+    _enPassantRow = oldEnPassantRow;
+    _enPassantTargetRow = oldEnPassantTarget;
+}
+
+// Negamax with Alpha-Beta Pruning
+int Chess::negamax(int depth, int alpha, int beta, int playerNumber)
+{
+    if (depth == 0) {
+        return evaluateBoard(playerNumber);
+    }
+    
+    std::vector<Move> moves = generateAllMoves(playerNumber);
+    
+    // Check for game over
+    if (moves.empty()) {
+        if (isInCheck(playerNumber)) {
+            return -50000; // Checkmate
+        }
+        return 0; // Stalemate
+    }
+    
+    // Move ordering: prioritize captures for better alpha-beta pruning
+    std::sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) {
+        bool aIsCapture = (a.toSquare->bit() != nullptr);
+        bool bIsCapture = (b.toSquare->bit() != nullptr);
+        return aIsCapture > bIsCapture; // Captures first
+    });
+    
+    int maxScore = INT_MIN;
+    
+    for (const auto& move : moves) {
+        // Save state
+        Bit* capturedPiece = move.toSquare->bit();
+        int oldEnPassantCol = _enPassantColumn;
+        int oldEnPassantRow = _enPassantRow;
+        int oldEnPassantTarget = _enPassantTargetRow;
+        
+        // Make move
+        makeMove(move);
+        
+        // Recurse
+        int opponentPlayer = (playerNumber == 0) ? 1 : 0;
+        int score = -negamax(depth - 1, -beta, -alpha, opponentPlayer);
+        
+        // Unmake move
+        unmakeMove(move, capturedPiece, oldEnPassantCol, oldEnPassantRow, oldEnPassantTarget);
+        
+        maxScore = std::max(maxScore, score);
+        alpha = std::max(alpha, score);
+        
+        if (alpha >= beta) {
+            break; // Beta cutoff
+        }
+    }
+    
+    return maxScore;
+}
+
+// Find the best move using Negamax
+Chess::Move Chess::findBestMove(int playerNumber)
+{
+    std::vector<Move> moves = generateAllMoves(playerNumber);
+    
+    if (moves.empty()) {
+        // Return a dummy move if no moves available
+        return Move(0, 0, 0, 0, nullptr, nullptr, nullptr);
+    }
+    
+    Move bestMove = moves[0];
+    int bestScore = INT_MIN;
+    
+    for (const auto& move : moves) {
+        // Save state
+        Bit* capturedPiece = move.toSquare->bit();
+        int oldEnPassantCol = _enPassantColumn;
+        int oldEnPassantRow = _enPassantRow;
+        int oldEnPassantTarget = _enPassantTargetRow;
+        
+        // Make move
+        makeMove(move);
+        
+        // Evaluate
+        int opponentPlayer = (playerNumber == 0) ? 1 : 0;
+        int score = -negamax(2, INT_MIN, INT_MAX, opponentPlayer); // Depth 2 (total depth 3)
+        
+        // Add small random noise to break ties and prevent repetition
+        score += (rand() % 10) - 5; // Random value between -5 and +4
+        
+        // Unmake move
+        unmakeMove(move, capturedPiece, oldEnPassantCol, oldEnPassantRow, oldEnPassantTarget);
+        
+        if (score > bestScore) {
+            bestScore = score;
+            bestMove = move;
+        }
+    }
+    
+    return bestMove;
+}
+
 void Chess::makeRandomMove(int playerNumber)
 {   
     _moveCount++;
     
-    std::vector<Move> allMoves = generateAllMoves(playerNumber);
-    
-    if (allMoves.empty()) {
-        return; // No moves available
-    }
-    
-    // Select a random move
-    int randomIndex = rand() % allMoves.size();
-    Move selectedMove = allMoves[randomIndex];
+    // Use Negamax to find the best move
+    Move bestMove = findBestMove(playerNumber);
     
     // Execute the move
-    if (selectedMove.fromSquare && selectedMove.toSquare && selectedMove.piece) {
+    if (bestMove.fromSquare && bestMove.toSquare && bestMove.piece) {
         // Remove piece from destination if there's a capture
-        if (selectedMove.toSquare->bit()) {
-            selectedMove.toSquare->destroyBit();
+        if (bestMove.toSquare->bit()) {
+            bestMove.toSquare->destroyBit();
         }
         
         // Move the piece
-        selectedMove.toSquare->setBit(selectedMove.piece);
-        selectedMove.fromSquare->setBit(nullptr);
+        bestMove.toSquare->setBit(bestMove.piece);
+        bestMove.fromSquare->setBit(nullptr);
         
         // Update the visual position of the piece
-        selectedMove.piece->setPosition(selectedMove.toSquare->getPosition());
+        bestMove.piece->setPosition(bestMove.toSquare->getPosition());
         
         // End the turn
         endTurn();
