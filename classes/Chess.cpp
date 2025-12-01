@@ -281,6 +281,24 @@ void Chess::bitMovedFromTo(Bit &bit, BitHolder &src, BitHolder &dst) {
         }
     }
     
+    // Handle Pawn Promotion
+    if (pieceType == Pawn) {
+        ChessSquare* dstSquare = dynamic_cast<ChessSquare*>(&dst);
+        if (dstSquare) {
+            int row = dstSquare->getRow();
+            // White promotes at row 7, Black at row 0
+            if ((isWhite && row == 7) || (!isWhite && row == 0)) {
+                // Promote to Queen
+                int newTag = (isWhite ? 0 : 128) + Queen;
+                bit.setGameTag(newTag);
+                
+                std::string spritePath = std::string("") + (isWhite ? "w_" : "b_") + "queen.png";
+                bit.LoadTextureFromFile(spritePath.c_str());
+                bit.setSize(pieceSize, pieceSize);
+            }
+        }
+    }
+
     // Handle castling - move the rook
     ChessSquare* srcSquare = dynamic_cast<ChessSquare*>(&src);
     ChessSquare* dstSquare = dynamic_cast<ChessSquare*>(&dst);
