@@ -105,4 +105,6 @@ private:
     // Helper methods for castling
     bool isSquareUnderAttack(int x, int y, bool byWhite);
     bool wouldKingBeInCheckAfterMove(int fromX, int fromY, int toX, int toY, int playerNumber);
+    bool canBitMoveFromToPseudo(Bit &bit, BitHolder &src, BitHolder &dst);
+    bool isInCheck(int playerNumber);
 };

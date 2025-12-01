@@ -364,6 +364,27 @@ bool Chess::canBitMoveFrom(Bit &bit, BitHolder &src)
 
 bool Chess::canBitMoveFromTo(Bit &bit, BitHolder &src, BitHolder &dst)
 {
+    if (!canBitMoveFromToPseudo(bit, src, dst)) {
+        return false;
+    }
+
+    ChessSquare* srcSquare = dynamic_cast<ChessSquare*>(&src);
+    ChessSquare* dstSquare = dynamic_cast<ChessSquare*>(&dst);
+    if (!srcSquare || !dstSquare) return false;
+
+    // Check if the move puts/leaves the king in check
+    // Note: We need to pass the player number of the moving piece
+    int playerNumber = (bit.gameTag() & 128) ? 1 : 0;
+    if (wouldKingBeInCheckAfterMove(srcSquare->getColumn(), srcSquare->getRow(), 
+                                    dstSquare->getColumn(), dstSquare->getRow(), playerNumber)) {
+        return false;
+    }
+
+    return true;
+}
+
+bool Chess::canBitMoveFromToPseudo(Bit &bit, BitHolder &src, BitHolder &dst)
+{
     // Get source and destination positions
     ChessSquare* srcSquare = dynamic_cast<ChessSquare*>(&src);
     ChessSquare* dstSquare = dynamic_cast<ChessSquare*>(&dst);
@@ -377,8 +398,6 @@ bool Chess::canBitMoveFromTo(Bit &bit, BitHolder &src, BitHolder &dst)
     int dstX = dstSquare->getColumn();
     int dstY = dstSquare->getRow();
     
-    // std::cout << "Checking move from " << srcX << "," << srcY << " to " << dstX << "," << dstY << std::endl;
-
     // Get the piece type and color from the game tag
     int pieceType = bit.gameTag() & 0x7F;  // Lower 7 bits for piece type
     bool isWhite = (bit.gameTag() & 0x80) == 0;  // Check if it's white's piece
@@ -574,11 +593,29 @@ Player* Chess::ownerAt(int x, int y) const
 
 Player* Chess::checkForWinner()
 {
+    int currentPlayerNum = getCurrentPlayer()->playerNumber();
+    
+    // Check if current player has any legal moves
+    auto moves = generateAllMoves(currentPlayerNum);
+    if (moves.empty()) {
+        if (isInCheck(currentPlayerNum)) {
+            // Checkmate - Opponent wins
+            return getPlayerAt(currentPlayerNum == 0 ? 1 : 0);
+        } else {
+            // Stalemate - Draw (handled in checkForDraw usually, but checkForWinner returns winner)
+            return nullptr; 
+        }
+    }
     return nullptr;
 }
 
 bool Chess::checkForDraw()
 {
+    int currentPlayerNum = getCurrentPlayer()->playerNumber();
+    auto moves = generateAllMoves(currentPlayerNum);
+    if (moves.empty() && !isInCheck(currentPlayerNum)) {
+        return true;
+    }
     return false;
 }
 
@@ -664,7 +701,15 @@ std::vector<Chess::Move> Chess::generateAllMoves(int playerNumber)
         }
     });
     
-    return allMoves;
+    // Filter out moves that leave the king in check
+    std::vector<Move> validMoves;
+    for (const auto& move : allMoves) {
+        if (!wouldKingBeInCheckAfterMove(move.fromX, move.fromY, move.toX, move.toY, playerNumber)) {
+            validMoves.push_back(move);
+        }
+    }
+    
+    return validMoves;
 }
 
 std::vector<Chess::Move> Chess::generatePawnMoves(int x, int y, Bit* piece)
@@ -884,7 +929,7 @@ bool Chess::isSquareUnderAttack(int x, int y, bool byWhite) {
             
             // Check if this piece can attack the target square
             ChessSquare* targetSquare = _grid->getSquare(x, y);
-            if (targetSquare && canBitMoveFromTo(*square->bit(), *square, *targetSquare)) {
+            if (targetSquare && canBitMoveFromToPseudo(*square->bit(), *square, *targetSquare)) {
                 return true;
             }
         }
@@ -899,11 +944,11 @@ bool Chess::wouldKingBeInCheckAfterMove(int fromX, int fromY, int toX, int toY, 
     if (!fromSquare || !toSquare || !fromSquare->bit()) return true;
     
     // Save the original state
-    Bit* movingPiece = fromSquare->bit();
-    Bit* capturedPiece = toSquare->bit();
+    // Use releaseBit() to prevent the pieces from being deleted by setBit()
+    Bit* movingPiece = fromSquare->releaseBit();
+    Bit* capturedPiece = toSquare->releaseBit();
     
     // Make the move
-    fromSquare->setBit(nullptr);
     toSquare->setBit(movingPiece);
 
     // Handle En Passant simulation
@@ -914,8 +959,8 @@ bool Chess::wouldKingBeInCheckAfterMove(int fromX, int fromY, int toX, int toY, 
         if (_enPassantColumn != -1 && toX == _enPassantColumn && toY == _enPassantTargetRow) {
              enPassantCapturedSquare = _grid->getSquare(_enPassantColumn, _enPassantRow);
              if (enPassantCapturedSquare) {
-                 enPassantCapturedPiece = enPassantCapturedSquare->bit();
-                 enPassantCapturedSquare->setBit(nullptr);
+                 // Use releaseBit to avoid deleting the pawn
+                 enPassantCapturedPiece = enPassantCapturedSquare->releaseBit();
              }
         }
     }
@@ -947,6 +992,8 @@ bool Chess::wouldKingBeInCheckAfterMove(int fromX, int fromY, int toX, int toY, 
     }
     
     // Undo the move
+    // Release movingPiece from toSquare before putting it back
+    toSquare->releaseBit();
     fromSquare->setBit(movingPiece);
     toSquare->setBit(capturedPiece);
 
@@ -1056,3 +1103,34 @@ std::vector<Chess::Move> Chess::generateQueenMoves(int x, int y, Bit* piece)
     return moves;
 }
 
+
+bool Chess::isInCheck(int playerNumber) {
+    // Find the king's position
+    int kingX = -1, kingY = -1;
+    bool kingFound = false;
+    
+    for (int y = 0; y < 8 && !kingFound; y++) {
+        for (int x = 0; x < 8; x++) {
+            ChessSquare* square = _grid->getSquare(x, y);
+            if (square && square->bit()) {
+                int pieceType = square->bit()->gameTag() & 0x7F;
+                bool pieceIsWhite = (square->bit()->gameTag() & 0x80) == 0;
+                if (pieceType == King && pieceIsWhite == (playerNumber == 0)) {
+                    kingX = x;
+                    kingY = y;
+                    kingFound = true;
+                    break;
+                }
+            }
+        }
+    }
+    
+    if (kingFound) {
+        // Check if the king is under attack by the opponent
+        // isSquareUnderAttack(x, y, byWhite) checks if 'byWhite' pieces are attacking
+        // If we are White (player 0), we want to know if Black (byWhite=false) is attacking
+        return isSquareUnderAttack(kingX, kingY, playerNumber != 0);
+    }
+    
+    return false;
+}

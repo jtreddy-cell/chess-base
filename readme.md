@@ -21,11 +21,11 @@ Queen movement DONE
 Castling DONE
 En passant DONE
 Promotion DONE
-Check/Checkmate
+Check/Checkmate DONE
 Negamax with ab pruning
 
 Bishop, Rook, and Queen movement were implemented simalirly to the previous piece types. 
 Castling was implemented by checking if the king and rook have moved, and if the squares between them are empty. 
 En passant was implemented by checking if the pawn has moved two spaces, and if the square next to it is empty. 
 Promotion was implemented by checking if the pawn has reached the opposite end of the board. Promotion just changes the piece to a queen, the player does not get to choose the piece.
- 
+Check/Checkmate was implemented by checking if the king is under attack by the opponent. 
